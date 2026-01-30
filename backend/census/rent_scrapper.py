@@ -1,12 +1,8 @@
-from fastapi import FastAPI, HTTPException
 import requests
 from bs4 import BeautifulSoup
 import re
 
-app = FastAPI()
-
-@app.get("/api/v1/avgrent/{city_name}")
-async def get_average_price(city_name: str):
+def get_average_price(city_name: str):
     # Construct URL dynamically based on city name
     url = f"https://www.magicbricks.com/property-for-rent/commercial-real-estate?proptype=Commercial-Shop,Commercial-Showroom&cityName={city_name}"
     
@@ -50,6 +46,6 @@ async def get_average_price(city_name: str):
         return round(avg_price, 2)
 
     except Exception as e:
-        raise HTTPException(status_code=404, detail=e)
+        return 0.0
 
 
