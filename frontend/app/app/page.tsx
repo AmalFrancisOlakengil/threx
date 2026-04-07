@@ -5,7 +5,10 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LocationMap } from '@/components/location-map';
-import { Search, MapPin, Download, Loader2, Users, IndianRupee, Briefcase } from 'lucide-react';
+import { ComparisonDashboard } from '@/components/comparison-dashboard';
+import { Search, MapPin, Download, Loader2, Users, IndianRupee, Briefcase, Zap, TrendingUp, BarChart3 } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
 import gsap from 'gsap';
 import jsPDF from 'jspdf';
 
@@ -86,10 +89,14 @@ const [location, setLocation] = useState('');
   const [currentDistrict, setCurrentDistrict] = useState(tamilNaduDistricts['chennai']);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [labourData, setLabourData] = useState<any[] | null>(null);
-  const [mapData, setMapData] = useState<{ shops: any; blindspots: any } | null>(null);
-  const [populationData, setPopulationData] = useState<any[] | null>(null); // NEW: Population State
+  const [mapData, setMapData] = useState<{ shops: any; blindspots: any[] } | null>(null);
+  const [populationData, setPopulationData] = useState<any[] | null>(null);
   const [avgRent, setAvgRent] = useState<number | null>(null);
+  const [opportunityScore, setOpportunityScore] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isComparing, setIsComparisonMode] = useState(false);
+  const [comparisonData, setComparisonData] = useState<any[]>([]);
+  const [focusedSpot, setFocusedSpot] = useState<{ lat: number; lng: number } | null>(null);
   
   const infoRef = useRef<HTMLDivElement>(null);
 const handleLocationChange = (value: string) => {
@@ -122,29 +129,15 @@ const handleSearchKey = (key: string) => {
 
    setLoading(true);
     try {
-    // 1. Fetch Map/Business Data
-      const coordUrl = `http://127.0.0.1:8000/api/v1/coord/${currentDistrict.name.toLowerCase()}/${selectedCategory.type}/${selectedCategory.value}`;
-      const coordRes = await fetch(coordUrl);
-      const coordData = await coordRes.json();
-      setMapData(coordData);
-
-      // 2. Fetch Population Data using the District Code
-      const popUrl = `http://127.0.0.1:8000/api/v1/population/${currentDistrict.code}`;
-      const popRes = await fetch(popUrl);
-      const popData = await popRes.json();
-      setPopulationData(popData);
-
-      // 3. NEW: Fetch Average Rent Data
-      const rentUrl = `http://127.0.0.1:8000/api/v1/avgrent/${currentDistrict.name.toLowerCase()}`;
-      const rentRes = await fetch(rentUrl);
-      const rentData = await rentRes.json();
-      setAvgRent(rentData); // This saves the number (e.g., 206416.67)
-
-      // 4. NEW: Fetch Labour Data using District Code
-      const labourUrl = `http://127.0.0.1:8000/api/v1/labour/${currentDistrict.code}`;
-      const labourRes = await fetch(labourUrl);
-      const lbData = await labourRes.json();
-      setLabourData(lbData);
+      const url = `http://127.0.0.1:8000/api/v1/full_analysis/${currentDistrict.code}/${currentDistrict.name.toLowerCase()}/${selectedCategory.type}/${selectedCategory.value}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      
+      setMapData(data.map);
+      setPopulationData(data.population);
+      setAvgRent(data.rent);
+      setLabourData(data.labour);
+      setOpportunityScore(data.opportunity_score);
 
       // Animation for the info panel
       if (infoRef.current) {
@@ -158,7 +151,23 @@ const handleSearchKey = (key: string) => {
     }
   };
 
+  const addToComparison = async () => {
+    const url = `http://127.0.0.1:8000/api/v1/compare?district_codes=${currentDistrict.code}&city_names=${currentDistrict.name.toLowerCase()}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    // Only add if not already in comparison
+    if (!comparisonData.find(item => item.district.toLowerCase() === currentDistrict.name.toLowerCase())) {
+      setComparisonData(prev => [...prev, ...data]);
+    }
+    setIsComparisonMode(true);
+  };
+
   const downloadPDF = () => {
+    if (!mapData || !populationData) {
+      alert("Please run an analysis first to generate a report.");
+      return;
+    }
+
     try {
       const pdf = new jsPDF({
         orientation: 'portrait',
@@ -167,50 +176,66 @@ const handleSearchKey = (key: string) => {
       });
 
       const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      let yPosition = 20;
       const margin = 15;
-      const contentWidth = pageWidth - 2 * margin;
+      let y = 20;
 
+      // Header
       pdf.setFont('Helvetica', 'bold');
-      pdf.setFontSize(20);
-      pdf.text('Location Analysis Report', margin, yPosition);
+      pdf.setFontSize(22);
+      pdf.setTextColor(44, 62, 80);
+      pdf.text('Market Analysis Report', margin, y);
+      
+      y += 10;
+      pdf.setFontSize(14);
+      pdf.setTextColor(52, 152, 219);
+      pdf.text(`${currentDistrict.name} District - ${selectedCategory.label}`, margin, y);
 
-      yPosition += 15;
+      y += 15;
+      pdf.setDrawColor(200, 200, 200);
+      pdf.line(margin, y, pageWidth - margin, y);
+
+      // Summary Section
+      y += 15;
+      pdf.setFontSize(12);
+      pdf.setTextColor(0, 0, 0);
+      pdf.text('Market Summary', margin, y);
+
+      y += 10;
       pdf.setFont('Helvetica', 'normal');
       pdf.setFontSize(10);
-      pdf.text(`Generated: ${new Date().toLocaleDateString()}`, margin, yPosition);
+      const totalPop = populationData.find(d => d.Type === "Total")?.["Persons"] || populationData[0]?.["Persons"];
+      pdf.text(`Total Population: ${totalPop.toLocaleString()}`, margin, y);
+      y += 7;
+      pdf.text(`Market Opportunity Score: ${opportunityScore}%`, margin, y);
+      y += 7;
+      pdf.text(`Average Commercial Rent: INR ${avgRent?.toLocaleString() || 'N/A'}/sq.ft`, margin, y);
+      y += 7;
+      pdf.text(`Existing Competitors: ${Object.keys(mapData.shops).length}`, margin, y);
 
-      yPosition += 15;
-      pdf.setDrawColor(200, 200, 200);
-      pdf.line(margin, yPosition, pageWidth - margin, yPosition);
-
-     
-      yPosition += 15;
+      // Recommendations
+      y += 15;
       pdf.setFont('Helvetica', 'bold');
       pdf.setFontSize(12);
-      pdf.text('Market Metrics', margin, yPosition);
+      pdf.text('Top Recommended Zones', margin, y);
 
-      yPosition += 10;
-      pdf.setFont('Helvetica', 'normal');
-      pdf.setFontSize(10);
-
-      
-
-      
-      yPosition += 10;
-      pdf.setDrawColor(200, 200, 200);
-      pdf.line(margin, yPosition, pageWidth - margin, yPosition);
-
-      yPosition += 10;
+      y += 10;
       pdf.setFont('Helvetica', 'normal');
       pdf.setFontSize(9);
-      const footerText = 'This report was generated by Zonely - Location Analysis Platform';
-      pdf.text(footerText, margin, pageHeight - 10);
+      mapData.blindspots.slice(0, 5).forEach((spot, i) => {
+        pdf.text(`${i + 1}. Zone at ${spot.lat.toFixed(4)}, ${spot.lng.toFixed(4)} - Score: ${(spot.score * 1000).toFixed(0)}`, margin + 5, y);
+        y += 6;
+      });
+
+      // Footer
+      pdf.setFontSize(8);
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(`Generated by Zonely on ${new Date().toLocaleDateString()}`, margin, 280);
+
+      pdf.save(`Zonely_Report_${currentDistrict.name}_${selectedCategory.value}.pdf`);
 
     } catch (error) {
-      console.error('[v0] PDF generation error:', error);
-      alert('Failed to generate PDF. Please try again.');
+      console.error('PDF generation error:', error);
+      alert('Failed to generate PDF.');
     }
   };
 
@@ -273,10 +298,34 @@ return (
           </div>
         </div>
 
-        <Button onClick={triggerAnalysis} disabled={loading} className="w-full bg-primary mt-4">
+        <Button onClick={triggerAnalysis} disabled={loading} className="w-full bg-primary mt-4 text-white">
           {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
           {loading ? "Analyzing..." : "Analyze Market"}
         </Button>
+
+        <Button 
+          variant="outline" 
+          onClick={addToComparison} 
+          className="w-full mt-2 border-primary text-primary hover:bg-primary/5"
+        >
+          <BarChart3 className="w-4 h-4 mr-2" /> Add to Compare ({comparisonData.length})
+        </Button>
+
+        {/* Opportunity Score Quick View */}
+        {opportunityScore && (
+          <div className="mt-6 p-4 bg-primary/5 rounded-lg border border-primary/20">
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="text-sm font-bold flex items-center gap-2">
+                <Zap className="w-4 h-4 text-yellow-500 fill-yellow-500" /> Opportunity Score
+              </h4>
+              <span className="text-xl font-black text-primary">{opportunityScore}%</span>
+            </div>
+            <Progress value={opportunityScore} className="h-2" />
+            <p className="text-[10px] text-muted-foreground mt-2 leading-tight">
+              Based on population density, established retail workforce, and competitive rent rates.
+            </p>
+          </div>
+        )}
 
         {/* Population Quick View Card */}
         {populationData && (
@@ -304,7 +353,10 @@ return (
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Map Area */}
         <div className="flex-1 relative border-b border-border">
-          <LocationMap data={mapData || { shops: {}, blindspots: {} }} />
+          <LocationMap 
+            data={mapData || { shops: {}, blindspots: [] }} 
+            focusedLocation={focusedSpot}
+          />
         </div>
 
         {/* Insight Panel */}
@@ -319,7 +371,7 @@ return (
                 <h3 className="text-lg font-bold text-foreground">{currentDistrict.name} Market Insight</h3>
                 <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Live Analysis</span>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => {setMapData(null); setPopulationData(null); setAvgRent?.(null);}}>Clear Data</Button>
+              <Button variant="ghost" size="sm" onClick={() => {setMapData(null); setPopulationData(null); setAvgRent(null); setOpportunityScore(null); setLabourData(null);}}>Clear Data</Button>
             </div>
 
             {/* Scrollable Content Container */}
@@ -335,7 +387,7 @@ return (
                     </div>
                     <div className="p-4 bg-green-50/50 rounded-xl border border-green-100">
                       <p className="text-xs font-semibold text-green-700 uppercase mb-1">Expansion Gaps</p>
-                      <p className="text-2xl font-bold text-green-600">{Object.keys(mapData.blindspots).length} <span className="text-sm font-normal">Blindspots</span></p>
+                      <p className="text-2xl font-bold text-green-600">{mapData.blindspots.length} <span className="text-sm font-normal">Blindspots</span></p>
                     </div>
                   </>
                 )}
@@ -352,11 +404,40 @@ return (
                   </div>
                 )}
 
-                <div className="p-4 bg-primary/5 rounded-xl border border-primary/10">
-                  <p className="text-xs font-semibold text-primary uppercase mb-1">Market Saturation</p>
-                  <p className="text-xl font-bold text-primary">Moderate</p>
-                </div>
+                {opportunityScore && (
+                  <div className="p-4 bg-primary/5 rounded-xl border border-primary/10">
+                    <p className="text-xs font-semibold text-primary uppercase mb-1">Market Opportunity</p>
+                    <p className="text-xl font-bold text-primary">{opportunityScore > 70 ? 'Excellent' : opportunityScore > 40 ? 'Moderate' : 'Developing'}</p>
+                  </div>
+                )}
               </div>
+
+              {/* --- NEW: TOP RECOMMENDED ZONES --- */}
+              {mapData && mapData.blindspots.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="text-sm font-bold flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-primary" /> Top Recommended Zones
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {mapData.blindspots.slice(0, 6).map((spot, idx) => (
+                      <div 
+                        key={idx} 
+                        onClick={() => setFocusedSpot({ lat: spot.lat, lng: spot.lng })}
+                        className="p-3 border rounded-lg bg-card hover:border-primary transition-all cursor-pointer group"
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <Badge variant="outline" className="text-[10px]">Zone #{idx + 1}</Badge>
+                          <span className="text-xs font-bold text-green-600">{(spot.score * 1000).toFixed(0)} pts</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">Lat: {spot.lat.toFixed(4)}, Lng: {spot.lng.toFixed(4)}</p>
+                        <div className="mt-2 text-[10px] text-primary font-bold opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                          <MapPin className="w-3 h-3" /> View on Map
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Population Data Table */}
               {populationData && (
@@ -445,6 +526,12 @@ return (
         )}
       </div>
     </div>
+    {isComparing && (
+      <ComparisonDashboard 
+        data={comparisonData} 
+        onClose={() => setIsComparisonMode(false)} 
+      />
+    )}
   </div>
 );
 }

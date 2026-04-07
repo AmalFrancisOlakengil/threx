@@ -18,13 +18,28 @@ const greenIcon = createColoredIcon("#22c55e"); // Blindspot color
 
 interface AnalysisData {
   shops: Record<string, number>;
-  blindspots: Record<string, number>;
+  blindspots: Array<{ lat: number; lng: number; score: number }>;
 }
 
-export function LocationMap({ data }: { data: AnalysisData }) {
+export function LocationMap({ 
+  data, 
+  focusedLocation 
+}: { 
+  data: AnalysisData, 
+  focusedLocation?: { lat: number; lng: number } | null 
+}) {
   const mapRef = useRef<L.Map | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const markerGroupRef = useRef<L.LayerGroup | null>(null);
+
+  // Focus effect
+  useEffect(() => {
+    if (mapRef.current && focusedLocation) {
+      mapRef.current.flyTo([focusedLocation.lat, focusedLocation.lng], 15, {
+        duration: 1.5
+      });
+    }
+  }, [focusedLocation]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -57,14 +72,15 @@ export function LocationMap({ data }: { data: AnalysisData }) {
       bounds.extend([lat, lng]);
     });
 
-    // 4. Process Blindspots (Green)
-    Object.entries(data.blindspots).forEach(([latStr, lng]) => {
-      const lat = parseFloat(latStr);
-      const marker = L.marker([lat, lng], { icon: greenIcon })
-        .bindPopup(`<b>Potential Blindspot</b><br/>Lat: ${lat}<br/>Lon: ${lng}`);
-      markerGroupRef.current?.addLayer(marker);
-      bounds.extend([lat, lng]);
-    });
+    // 4. Process Ranked Blindspots (Green)
+    if (Array.isArray(data.blindspots)) {
+      data.blindspots.forEach((spot) => {
+        const marker = L.marker([spot.lat, spot.lng], { icon: greenIcon })
+          .bindPopup(`<b>Recommended Zone</b><br/>Opportunity Score: ${(spot.score * 1000).toFixed(1)}<br/>Lat: ${spot.lat}<br/>Lon: ${spot.lng}`);
+        markerGroupRef.current?.addLayer(marker);
+        bounds.extend([spot.lat, spot.lng]);
+      });
+    }
 
     // 5. Auto-fit map to show all markers
     if (bounds.isValid() && mapRef.current) {

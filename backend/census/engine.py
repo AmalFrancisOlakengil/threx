@@ -10,7 +10,7 @@ def get_real_blindspots(location_name, category_type, category_value, threshold=
     headers = {'User-Agent': 'ZonelyApp/1.0'}
     
     geo_data = requests.get(geo_url, params=geo_params, headers=headers).json()
-    if not geo_data: return np.array([]), np.array([])
+    if not geo_data: return [], np.array([])
 
     # Create a Shapely object from the city boundary
     city_shape = shape(geo_data[0]['geojson'])
@@ -19,7 +19,7 @@ def get_real_blindspots(location_name, category_type, category_value, threshold=
 
     # 2. Fetch shops
     points = get_coordinates(location_name, category_type, category_value)
-    if not points: return np.array([]), np.array([])
+    if not points: return [], np.array([])
     shop_coords = np.array([[p[1], p[2]] for p in points])
 
     # 3. Create Grid
@@ -34,15 +34,50 @@ def get_real_blindspots(location_name, category_type, category_value, threshold=
             if city_shape.contains(point):
                 valid_grid_points.append((lat, lon))
     
-    if not valid_grid_points: return np.array([]), shop_coords
+    if not valid_grid_points: return [], shop_coords
     grid_points = np.array(valid_grid_points)
 
     # 5. Calculate Blindspots
     tree = KDTree(shop_coords)
     dist, _ = tree.query(grid_points, k=1) 
-    blindspots = grid_points[dist.flatten() > threshold]
     
-    return blindspots, shop_coords
+    # Filter points above threshold
+    mask = dist.flatten() > threshold
+    blindspot_coords = grid_points[mask]
+    blindspot_dists = dist.flatten()[mask]
+    
+    if len(blindspot_coords) == 0:
+        return [], shop_coords
+
+    # 6. Rank and Cluster (Simple implementation: pick top N furthest from competitors)
+    # To avoid returning 100s of points, we'll return the top 10 most "isolated" spots
+    ranked_indices = np.argsort(blindspot_dists)[::-1]
+    
+    top_blindspots = []
+    seen_points = []
+    
+    # Clustering: Only pick points that are at least 'threshold' distance from each other
+    # to avoid returning a cluster of points in the same spot
+    for idx in ranked_indices:
+        point = blindspot_coords[idx]
+        is_far_enough = True
+        for seen in seen_points:
+            d = np.sqrt(np.sum((point - seen)**2))
+            if d < threshold:
+                is_far_enough = False
+                break
+        
+        if is_far_enough:
+            top_blindspots.append({
+                "lat": float(point[0]),
+                "lng": float(point[1]),
+                "score": float(blindspot_dists[idx])
+            })
+            seen_points.append(point)
+            if len(top_blindspots) >= 10: # Limit to top 10 zones
+                break
+    
+    return top_blindspots, shop_coords
 
 def get_coordinates(location_name, category_type, category_value):
     # 1. Get Area ID from Location Name
